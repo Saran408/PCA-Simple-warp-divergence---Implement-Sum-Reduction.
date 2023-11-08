@@ -1,222 +1,305 @@
-# PCA-Simple-warp-divergence---Implement-Sum-Reduction.
-Refer to the kernel reduceUnrolling8 and implement the kernel reduceUnrolling16, in which each thread handles 16 data blocks. Compare kernel performance with reduceUnrolling8 and use the proper metrics and events with nvprof to explain any difference in performance.
-
-## Aim:
+### Exp No: 03
+### Date: 13-09-2023
+# <p align="center">Simple-warp-divergence---Implement-Sum-Reduction</p>
+## AIM
 To implement the kernel reduceUnrolling16 and comapare the performance of kernal reduceUnrolling16 with kernal reduceUnrolling8 using proper metrics and events with nvprof.
-## Procedure:
-Step 1 : Include the required files and library.
 
-Step 2 : Introduce a function named 'recursiveReduce' to implement Interleaved Pair Approach and function 'reduceInterleaved' to implement Interleaved Pair with less divergence.
+## PROCEDURE
+1. Initialize an input array of size 1024.
+2. Launch the reduceUnrolling8 kernel, which performs reduction using 8 data blocks per thread.
+3. Launch the reduceUnrolling16 kernel, which performs reduction using 16 data blocks per thread.
+4. Compare the results obtained from both kernels.
 
-Step 3 : Introduce a function named 'reduceNeighbored' to implement Neighbored Pair with divergence and function 'reduceNeighboredLess' to implement Neighbored Pair with less divergence.
+## PROGRAM
+Developed By SARAN M
 
-Step 4 : Introduce optimizations such as unrolling to reduce divergence.
+Reg. No.: 212220230044
 
-Step 5 : Declare three global function named 'reduceUnrolling2' , 'reduceUnrolling4' , 'reduceUnrolling8' , 'reduceUnrolling16' and then set the thread ID , convert global data pointer to the local pointer of the block , perform in-place reduction in global memory ,finally write the result of the block to global memory in all the three function respectively.
 
-Step 6 : Declare functions to unroll the warp. Declare a global function named 'reduceUnrollWarps8' and then set the thread ID , convert global data pointer to the local pointer of the block , perform in-place reduction in global memory , unroll the warp ,finally write the result of the block to global memory infunction.
+```cuda
 
-Step 7 : Declare Main method/function . In the Main method , set up the device and initialise the size and block size. Allocate the host memory and device memory and then call the kernals decalred in the function.
-
-Step 8 : Atlast , free the host and device memory then reset the device and check for results.
-
-# Program:
-kernel reduceUnrolling8
-``` c
+#include <cuda_runtime.h>
 #include <stdio.h>
 #include <cuda.h>
+#include <sys/time.h>
 
-#define N 1024
-
-__global__ void sumReduction(int* data) {
-    __shared__ int sharedData[N];
+__global__ void reduceUnrolling8 (int *g_idata, int *g_odata, unsigned int n)
+{
+    // set thread ID
     unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int idx = blockIdx.x * blockDim.x * 8 + threadIdx.x;
 
-    sharedData[tid] = data[i];
+    // convert global data pointer to the local pointer of this block
+    int *idata = g_idata + blockIdx.x * blockDim.x * 8;
+
+    // unrolling 8
+    if (idx + 7 * blockDim.x < n)
+    {
+        int a1 = g_idata[idx];
+        int a2 = g_idata[idx + blockDim.x];
+        int a3 = g_idata[idx + 2 * blockDim.x];
+        int a4 = g_idata[idx + 3 * blockDim.x];
+        int b1 = g_idata[idx + 4 * blockDim.x];
+        int b2 = g_idata[idx + 5 * blockDim.x];
+        int b3 = g_idata[idx + 6 * blockDim.x];
+        int b4 = g_idata[idx + 7 * blockDim.x];
+        g_idata[idx] = a1 + a2 + a3 + a4 + b1 + b2 + b3 + b4;
+    }
+
     __syncthreads();
 
-    // Perform reduce unrolling8 sum reduction using warp divergence
-    for (unsigned int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
-        if (tid < stride) {
-            sharedData[tid] += sharedData[tid + stride];
+    // in-place reduction in global memory
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride)
+        {
+            idata[tid] += idata[tid + stride];
         }
+
+        // synchronize within threadblock
         __syncthreads();
     }
 
-    // Warp divergence
-    if (tid < 32) {
-        volatile int* vsharedData = sharedData;
-        vsharedData[tid] += vsharedData[tid + 32];
-        vsharedData[tid] += vsharedData[tid + 16];
-        vsharedData[tid] += vsharedData[tid + 8];
-        vsharedData[tid] += vsharedData[tid + 4];
-        vsharedData[tid] += vsharedData[tid + 2];
-        vsharedData[tid] += vsharedData[tid + 1];
-    }
-
-    // Store the final result in global memory
-    if (tid == 0) {
-        data[blockIdx.x] = sharedData[0];
-    }
+    // write result for this block to global mem
+    if (tid == 0) g_odata[blockIdx.x] = idata[0];
 }
-
-int main() {
-    int* data;
-    int* d_data;
-
-    // Allocate and initialize the data array
-    data = (int*)malloc(N * sizeof(int));
-    for (int i = 0; i < N; i++) {
-        data[i] = i + 1;
-    }
-
-    // Allocate device memory for the data array
-    cudaMalloc(&d_data, N * sizeof(int));
-
-    // Copy the data array from host to device
-    cudaMemcpy(d_data, data, N * sizeof(int), cudaMemcpyHostToDevice);
-
-    // Launch the kernel
-    dim3 block(N / 2);
-    dim3 grid(1);
-
-    cudaEvent_t start, end;
-    cudaEventCreate(&start);
-    cudaEventCreate(&end);
-
-    cudaEventRecord(start);
-    sumReduction << <grid, block >> > (d_data);
-    cudaEventRecord(end);
-    cudaEventSynchronize(end);
-
-    // Copy the result back from device to host
-    cudaMemcpy(data, d_data, sizeof(int), cudaMemcpyDeviceToHost);
-
-    // Print the final sum
-    printf("Sum: %d\n", data[0]);
-
-    // Calculate the elapsed time
-    float elapsed;
-    cudaEventElapsedTime(&elapsed, start, end);
-    printf("Elapsed Time: %.6f milliseconds\n", elapsed);
-
-    // Destroy the CUDA events
-    cudaEventDestroy(start);
-    cudaEventDestroy(end);
-
-    // Free device memory
-    cudaFree(d_data);
-
-    // Free host memory
-    free(data);
-
-    return 0;
-}
-
-```
-
-unrolling16
-
-``` c
-#include <stdio.h>
-#include <cuda.h>
-#define N 1024
-__global__ void sumReduction(int* data) {
-    __shared__ int sharedData[N];
+__global__ void reduceUnrolling16 (int *g_idata, int *g_odata, unsigned int n)
+{
+    // set thread ID
     unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x * blockDim.x * 16 + threadIdx.x;
+    unsigned int idx = blockIdx.x * blockDim.x * 16 + threadIdx.x;
 
-    // Load data into shared memory
-    sharedData[tid] = data[i];
-    __syncthreads();
+    // convert global data pointer to the local pointer of this block
+    int *idata = g_idata + blockIdx.x * blockDim.x * 16;
 
-    // Perform reduce unrolling16 sum reduction using warp divergence
-    if (tid < 512) sharedData[tid] += sharedData[tid + 512];
-    __syncthreads();
-    if (tid < 256) sharedData[tid] += sharedData[tid + 256];
-    __syncthreads();
-    if (tid < 128) sharedData[tid] += sharedData[tid + 128];
-    __syncthreads();
-    if (tid < 64) sharedData[tid] += sharedData[tid + 64];
-    __syncthreads();
-
-    // Warp divergence
-    if (tid < 32) {
-        volatile int* vsharedData = sharedData;
-        vsharedData[tid] += vsharedData[tid + 32];
-        vsharedData[tid] += vsharedData[tid + 16];
-        vsharedData[tid] += vsharedData[tid + 8];
-        vsharedData[tid] += vsharedData[tid + 4];
-        vsharedData[tid] += vsharedData[tid + 2];
-        vsharedData[tid] += vsharedData[tid + 1];
+    // unrolling 16
+    if (idx + 15 * blockDim.x < n)
+    {
+        int a1 = g_idata[idx];
+        int a2 = g_idata[idx + blockDim.x];
+        int a3 = g_idata[idx + 2 * blockDim.x];
+        int a4 = g_idata[idx + 3 * blockDim.x];
+        int b1 = g_idata[idx + 4 * blockDim.x];
+        int b2 = g_idata[idx + 5 * blockDim.x];
+        int b3 = g_idata[idx + 6 * blockDim.x];
+        int b4 = g_idata[idx + 7 * blockDim.x];
+        int c1 = g_idata[idx + 8 * blockDim.x];
+        int c2 = g_idata[idx + 9 * blockDim.x];
+        int c3 = g_idata[idx + 10 * blockDim.x];
+        int c4 = g_idata[idx + 11 * blockDim.x];
+        int d1 = g_idata[idx + 12 * blockDim.x];
+        int d2 = g_idata[idx + 13 * blockDim.x];
+        int d3 = g_idata[idx + 14 * blockDim.x];
+        int d4 = g_idata[idx + 15 * blockDim.x];
+        g_idata[idx] = a1 + a2 + a3 + a4 + b1 + b2 + b3 + b4 + c1 + c2 + c3 + c4
+                       + d1 + d2 + d3 + d4;
     }
 
-    // Store the final result in global memory
-    if (tid == 0) {
-        data[blockIdx.x] = sharedData[0];
+    __syncthreads();
+
+    // in-place reduction in global memory
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (tid < stride)
+        {
+            idata[tid] += idata[tid + stride];
+        }
+
+        // synchronize within threadblock
+        __syncthreads();
     }
+
+    // write result for this block to global mem
+    if (tid == 0) g_odata[blockIdx.x] = idata[0];
 }
 
-int main() {
-    int* data;
-    int* d_data;
-    cudaEvent_t start, stop;
-    float elapsed;
+#ifndef _COMMON_H
+#define _COMMON_H
 
-    // Allocate and initialize the data array
-    data = (int*)malloc(N * sizeof(int));
-    for (int i = 0; i < N; i++) {
-        data[i] = i + 1;
+#define CHECK(call)                                                            \
+{                                                                              \
+    const cudaError_t error = call;                                            \
+    if (error != cudaSuccess)                                                  \
+    {                                                                          \
+        fprintf(stderr, "Error: %s:%d, ", __FILE__, __LINE__);                 \
+        fprintf(stderr, "code: %d, reason: %s\n", error,                       \
+                cudaGetErrorString(error));                                    \
+        exit(1);                                                               \
+    }                                                                          \
+}
+
+#define CHECK_CUBLAS(call)                                                     \
+{                                                                              \
+    cublasStatus_t err;                                                        \
+    if ((err = (call)) != CUBLAS_STATUS_SUCCESS)                               \
+    {                                                                          \
+        fprintf(stderr, "Got CUBLAS error %d at %s:%d\n", err, __FILE__,       \
+                __LINE__);                                                     \
+        exit(1);                                                               \
+    }                                                                          \
+}
+
+#define CHECK_CURAND(call)                                                     \
+{                                                                              \
+    curandStatus_t err;                                                        \
+    if ((err = (call)) != CURAND_STATUS_SUCCESS)                               \
+    {                                                                          \
+        fprintf(stderr, "Got CURAND error %d at %s:%d\n", err, __FILE__,       \
+                __LINE__);                                                     \
+        exit(1);                                                               \
+    }                                                                          \
+}
+
+#define CHECK_CUFFT(call)                                                      \
+{                                                                              \
+    cufftResult err;                                                           \
+    if ( (err = (call)) != CUFFT_SUCCESS)                                      \
+    {                                                                          \
+        fprintf(stderr, "Got CUFFT error %d at %s:%d\n", err, __FILE__,        \
+                __LINE__);                                                     \
+        exit(1);                                                               \
+    }                                                                          \
+}
+
+#define CHECK_CUSPARSE(call)                                                   \
+{                                                                              \
+    cusparseStatus_t err;                                                      \
+    if ((err = (call)) != CUSPARSE_STATUS_SUCCESS)                             \
+    {                                                                          \
+        fprintf(stderr, "Got error %d at %s:%d\n", err, __FILE__, __LINE__);   \
+        cudaError_t cuda_err = cudaGetLastError();                             \
+        if (cuda_err != cudaSuccess)                                           \
+        {                                                                      \
+            fprintf(stderr, "  CUDA error \"%s\" also detected\n",             \
+                    cudaGetErrorString(cuda_err));                             \
+        }                                                                      \
+        exit(1);                                                               \
+    }                                                                          \
+}
+
+inline double seconds()
+{
+    struct timeval tp;
+    struct timezone tzp;
+    int i = gettimeofday(&tp, &tzp);
+    return ((double)tp.tv_sec + (double)tp.tv_usec * 1.e-6);
+}
+
+#endif // _COMMON_H
+
+int main(int argc, char **argv)
+{
+    // set up device
+    int dev = 0;
+    cudaDeviceProp deviceProp;
+    CHECK(cudaGetDeviceProperties(&deviceProp, dev));
+    printf("%s starting reduction at ", argv[0]);
+    printf("device %d: %s ", dev, deviceProp.name);
+    CHECK(cudaSetDevice(dev));
+
+    bool bResult = false;
+
+    // initialization
+    int size = 1 << 24; // total number of elements to reduce
+    printf("    with array size %d  ", size);
+
+    // execution configuration
+    int blocksize = 512;   // initial block size
+
+    if(argc > 1)
+    {
+        blocksize = atoi(argv[1]);   // block size from command line argument
     }
 
-    // Allocate device memory for the data array
-    cudaMalloc(&d_data, N * sizeof(int));
+    dim3 block (blocksize, 1);
+    dim3 grid  ((size + block.x - 1) / block.x, 1);
+    printf("grid %d block %d\n", grid.x, block.x);
 
-    // Copy the data array from host to device
-    cudaMemcpy(d_data, data, N * sizeof(int), cudaMemcpyHostToDevice);
+    // allocate host memory
+    size_t bytes = size * sizeof(int);
+    int *h_idata = (int *) malloc(bytes);
+    int *h_odata = (int *) malloc(grid.x * sizeof(int));
+    int *tmp     = (int *) malloc(bytes);
 
-    // Launch the kernel
-    dim3 block(N / 32);
-    dim3 grid(1);
+    // initialize the array
+    for (int i = 0; i < size; i++)
+    {
+        // mask off high 2 bytes to force max number to 255
+        h_idata[i] = (int)( rand() & 0xFF );
+    }
 
-    // Start the timer
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start, 0);
+    memcpy (tmp, h_idata, bytes);
 
-    sumReduction << <grid, block >> > (d_data);
+    double iStart, iElapsunroll8,iElapsunroll16;
+    int gpu_sum = 0;
 
-    // Stop the timer
-    cudaEventRecord(stop, 0);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&elapsed, start, stop);
+    // allocate device memory
+    int *d_idata = NULL;
+    int *d_odata = NULL;
+    CHECK(cudaMalloc((void **) &d_idata, bytes));
+    CHECK(cudaMalloc((void **) &d_odata, grid.x * sizeof(int)));
 
-    // Copy the result back from device to host
-    cudaMemcpy(data, d_data, sizeof(int), cudaMemcpyDeviceToHost);
+    // kernel 1: reduceUnrolling8
+    CHECK(cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice));
+    CHECK(cudaDeviceSynchronize());
+    iStart = seconds();
+    reduceUnrolling8<<<grid.x / 8, block>>>(d_idata, d_odata, size);
+    CHECK(cudaDeviceSynchronize());
+    iElapsunroll8 = seconds() - iStart;
+    CHECK(cudaMemcpy(h_odata, d_odata, grid.x / 8 * sizeof(int),
+                     cudaMemcpyDeviceToHost));
+    gpu_sum = 0;
 
-    // Print the final sum
-    printf("Sum: %d\n", data[0]);
+    for (int i = 0; i < grid.x / 8; i++) gpu_sum += h_odata[i];
 
-    // Print the elapsed time
-    printf("Elapsed Time: %.3f ms\n", elapsed);
+    printf("gpu Unrolling8  elapsed %f sec gpu_sum: %d <<<grid %d block "
+           "%d>>>\n", iElapsunroll8, gpu_sum, grid.x / 8, block.x);
 
-    // Free device memory
-    cudaFree(d_data);
+    for (int i = 0; i < grid.x / 16; i++) gpu_sum += h_odata[i];
+// kernel 2: reduceUnrolling16
+    CHECK(cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice));
+    CHECK(cudaDeviceSynchronize());
+    iStart = seconds();
+    reduceUnrolling16<<<grid.x / 16, block>>>(d_idata, d_odata, size);
+    CHECK(cudaDeviceSynchronize());
+    iElapsunroll16 = seconds() - iStart;
+    CHECK(cudaMemcpy(h_odata, d_odata, grid.x / 16 * sizeof(int),
+                     cudaMemcpyDeviceToHost));
+    gpu_sum = 0;
 
-    // Free host memory
-    free(data);
+    for (int i = 0; i < grid.x / 16; i++) gpu_sum += h_odata[i];
 
-    return 0;
+    printf("gpu Unrolling16 elapsed %f sec gpu_sum: %d <<<grid %d block "
+           "%d>>>\n", iElapsunroll16, gpu_sum, grid.x / 16, block.x);
+    
+    // Determine the kernel with the least execution time
+    if (iElapsunroll8< iElapsunroll16)
+    {
+        printf("reduceUnrolling8 has the least execution time.\n");
+    }
+    else if (iElapsunroll16 < iElapsunroll8)
+    {
+        printf("reduceUnrolling16 has the least execution time.\n");
+    }
+    else
+    {
+        printf("reduceUnrolling8 and reduceUnrolling16 have the same execution time.\n");
+    }
+    // free host memory
+    free(h_idata);
+    free(h_odata);
+    // free device memory
+    CHECK(cudaFree(d_idata));
+    CHECK(cudaFree(d_odata));
+    // reset device
+    CHECK(cudaDeviceReset());
+    return EXIT_SUCCESS;
 }
+
 ```
-## Output:
-### Unrolling 8
-![image](https://github.com/curiouzs/PCA-Simple-warp-divergence---Implement-Sum-Reduction./assets/75234646/ed14412b-a3fc-4f07-9530-9981c5637940)
-
-### Unrolling 16
-![image](https://github.com/curiouzs/PCA-Simple-warp-divergence---Implement-Sum-Reduction./assets/75234646/c2560952-ad1d-4860-ba98-de649b38af08)
+## OUTPUT
+<img width="872" alt="exp 3" src="https://github.com/kumaranricky/PCA-Simple-warp-divergence---Implement-Sum-Reduction./assets/75243072/3f6ab31d-0480-4611-806c-4ff2eae7f155">
 
 
-## Result:
-Implementation of the kernel reduceUnrolling16 is done and the performance of kernal reduceUnrolling16 is comapared with kernal reduceUnrolling8 using proper metrics and events with nvprof.
+## RESULT
+Thus, the performance of two CUDA kernels, reduceUnrolling8 and reduceUnrolling16 has been compared successfully. 
